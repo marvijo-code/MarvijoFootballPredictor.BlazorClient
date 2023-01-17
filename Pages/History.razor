@@ -1,0 +1,18 @@
+﻿@page "/history"
+
+<PageTitle>History</PageTitle>
+
+<h1>History</h1>
+
+<p role="status">Football HistorycurrentCount</p>
+
+<button class="btn btn-primary" @onclick="IncrementCount">Click me</button>
+
+@code {
+    private int currentCount = 0;
+
+    private void IncrementCount()
+    {
+        currentCount++;
+    }
+}

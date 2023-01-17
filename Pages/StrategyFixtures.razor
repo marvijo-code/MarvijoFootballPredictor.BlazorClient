@@ -1,0 +1,181 @@
+﻿@page "/strategyfixtures"
+@using Marvijo.Betting.Football.BlazorClient
+@using System.Text.Json
+@using System.Configuration;
+@using Marvijo.Betting.v1.Models;
+@using Microsoft.Extensions.Configuration;
+@using System.Linq;
+
+<PageTitle>Marvijo Under 3.5 Goal Predictions</PageTitle>
+
+<h1>Marvijo Betway Under 3.5 Goal Predictions</h1>
+
+@code {
+    IEnumerable<Match> _matches = null;
+
+    private static string filter = "?$filter=odds_GoalsUnder3_5 le 1.4 and odds_GoalsUnder3_5 ge 1.2 and resultOddsDiff lt 5&$count=true";
+    private static string _filteredMatchesEndpoint = $"/v1/Matches/GetFilteredMatches";
+    private static string _apiRootUrl = "https://marvijo-betting.azurewebsites.net";
+    private static string _apiRootUrlLocal = "https://localhost:5001";
+    private string _apiUrl = $"{_apiRootUrl}{_filteredMatchesEndpoint}";
+    private string _apiUrlLocal = $"{_apiRootUrlLocal}{_filteredMatchesEndpoint}";
+
+    private string _apiRootUrlFinal = null;
+    private string? _env = null;
+    private HttpClient _http;
+
+    public StrategyFixtures()
+    {
+        _env = System.Configuration.ConfigurationManager.AppSettings["ASPNETCORE_ENVIRONMENT"];
+
+        _prod = _env?.ToLower() != "development";
+        _http = new HttpClient();
+    }
+
+    private readonly bool _prod;
+    private GetMatchSettingsRequestModel _settings = null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (_prod)
+            _apiRootUrlFinal = _apiRootUrl;
+        else
+            _apiRootUrlFinal = _apiRootUrlLocal;
+
+        var getSettingsUrl = $"{_apiRootUrlFinal}/v1/matches/GetSettings()";
+        var httpResponse = await _http.GetAsync(getSettingsUrl);
+        var settingsResponseStream = await httpResponse.Content.ReadAsStreamAsync();
+        _settings = await JsonSerializer.DeserializeAsync<GetMatchSettingsRequestModel>(settingsResponseStream, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+        if (_settings != null)
+            _settings.under3_5Filter = "";
+
+        await UpdateMatches();
+        //_matches = _matches.Where(m => m.StartDate.DateTime.ToLocalTime() > DateTime.Now).ToList();
+    }
+
+    public async Task UpdateMatches()
+    {
+        _matches = null;
+
+        var matchesUrl = $"{_apiRootUrlFinal}{_filteredMatchesEndpoint}{_settings.under3_5Filter}";
+        var matchesPayload = new GetMatchesRequestModel
+            {
+                excludedLeagues = _settings.excludedLeagues,
+                excludedTeams = _settings.excludedTeams
+            };
+
+        var httpResponse = await _http.PostAsJsonAsync<GetMatchesRequestModel>(matchesUrl, matchesPayload);
+
+        var content = await httpResponse.Content.ReadAsStreamAsync();
+        var matchResult = await JsonSerializer.DeserializeAsync<JsonDocument>(content, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+        matchResult.RootElement.TryGetProperty("value", out JsonElement valueElement);
+        _matches = valueElement.Deserialize<IEnumerable<Match>>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+        _matches = _matches.ToList();
+    }
+
+    public class GetMatchesRequestModel
+    {
+        public string excludedLeagues { get; set; }
+        public string excludedTeams { get; set; }
+    }
+
+    public class GetMatchSettingsRequestModel : GetMatchesRequestModel
+    {
+        public string under3_5Filter { get; set; }
+    }
+}
+
+
+@if (_env != null)
+{
+    <h3>ASPNETCORE_ENVIRONMENT: @_env</h3>
+}
+else
+{
+    <h3>No configuration loaded. Env: @_env</h3>
+}
+
+@if (_settings == null)
+{
+    <p>Loading strategy...</p>
+}
+else
+{
+    <table class="table table-striped">
+        <thead class="thead-dark">
+            <tr>
+                <td>
+                    Excluded Leagues
+                </td>
+                <td>
+                    Excluded Teams
+                </td>
+                <td>
+                    OData Filter
+                </td>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>
+                    <textarea class="form-control" id="excludedLeagues" style="width:100%">@_settings.excludedLeagues</textarea>
+                </td>
+                <td>
+                    <textarea class="form-control" id="excludedTeams" style="width:100%">@_settings.excludedTeams</textarea>
+                </td>
+                <td>
+                    <textarea class="form-control" id="under3_5Filter" style="width:100%" @bind="@_settings.under3_5Filter"></textarea>
+                </td>
+            </tr>
+            <tr>
+                <td>
+                    <a @onclick="UpdateMatches" class="btn btn-primary" href="#">Refresh</a>
+                </td>
+            </tr>
+        </tbody>
+    </table>
+}
+
+@if (_matches == null)
+{
+    <p>Loading data...</p>
+}
+else
+{
+    <table class="table table-striped ">
+        <thead class="thead-dark">
+            <tr>
+                <th>Match Id</th>
+                <th>Link</th>
+                <th>Home Team</th>
+                <th>Away Team</th>
+                <th>Start Date</th>
+                <th>Under 3.5 Odds</th>
+                <th>Home Win Odds</th>
+                <th>Draw Odds</th>
+                <th>Away Win Odds</th>
+                <th>League</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var match in _matches)
+            {
+                <tr>
+                    <td>@match.Id</td>
+                    <td><a target="_blank" href="https://www.google.co.za/search?q=@match.Team1 vs @match.Team2 sofascore">Link to Match</a></td>
+                    <td>@match.Team1</td>
+                    <td>@match.Team2</td>
+                    <td>@match.StartDate.DateTime.ToLocalTime()</td>
+                    <td>@match.Odds_GoalsUnder3_5</td>
+                    <td>@match.Odds_HomeWin</td>
+                    <td>@match.Odds_Draw</td>
+                    <td>@match.Odds_AwayWin</td>
+                    <td>@match.League</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
