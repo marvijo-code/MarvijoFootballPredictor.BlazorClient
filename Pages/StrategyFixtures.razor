@@ -2,16 +2,20 @@
 @using Marvijo.Betting.Football.BlazorClient
 @using System.Text.Json
 @using System.Configuration;
+@using Marvijo.Betting.SportsBettingAPI.v1.Models;
 @using Marvijo.Betting.v1.Models;
 @using Microsoft.Extensions.Configuration;
 @using System.Linq;
+@using Microsoft.AspNetCore.Components.QuickGrid;
+@using System.Text;
+@inject IConfiguration _configuration;
 
 <PageTitle>Marvijo Under 3.5 Goal Predictions</PageTitle>
 
 <h1>Marvijo Betway Under 3.5 Goal Predictions</h1>
 
 @code {
-    IEnumerable<Match> _matches = null;
+    private IEnumerable<Match> _matches = null;
 
     private static string filter = "?$filter=odds_GoalsUnder3_5 le 1.4 and odds_GoalsUnder3_5 ge 1.2 and resultOddsDiff lt 5&$count=true";
     private static string _filteredMatchesEndpoint = $"/v1/Matches/GetFilteredMatches";
@@ -22,14 +26,19 @@
 
     private string _apiRootUrlFinal = null;
     private string? _env = null;
-    private HttpClient _http;
+    private HttpClient _httpClient;
 
     public StrategyFixtures()
     {
         _env = System.Configuration.ConfigurationManager.AppSettings["ASPNETCORE_ENVIRONMENT"];
 
+        if (_env == null)
+        {
+            _env = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
+        }
+
         _prod = _env?.ToLower() != "development";
-        _http = new HttpClient();
+        _httpClient = new HttpClient();
     }
 
     private readonly bool _prod;
@@ -43,7 +52,23 @@
             _apiRootUrlFinal = _apiRootUrlLocal;
 
         var getSettingsUrl = $"{_apiRootUrlFinal}/v1/matches/GetSettings()";
-        var httpResponse = await _http.GetAsync(getSettingsUrl);
+
+        var accessTokenRequest = new AccessTokenRequest
+            {
+                ClientId = _configuration["ClientId"],
+                ClientSecret = _configuration["ClientSecret"],
+            };
+
+        var getAccessTokenUrl = $"{_apiRootUrlFinal}/v1/Auth/Token";
+        var accessToken = await _httpClient.PostAsJsonAsync<AccessTokenRequest>(getAccessTokenUrl, accessTokenRequest);
+        var tokenResponse = await accessToken.Content.ReadAsStringAsync();
+
+        var request = new HttpRequestMessage(HttpMethod.Get, getSettingsUrl);
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tokenResponse);
+
+        //var httpResponse = await _httpClient.GetAsync(getSettingsUrl);
+        var httpResponse = await _httpClient.SendAsync(request);
+
         var settingsResponseStream = await httpResponse.Content.ReadAsStreamAsync();
         _settings = await JsonSerializer.DeserializeAsync<GetMatchSettingsRequestModel>(settingsResponseStream, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
@@ -65,7 +90,7 @@
                 excludedTeams = _settings.excludedTeams
             };
 
-        var httpResponse = await _http.PostAsJsonAsync<GetMatchesRequestModel>(matchesUrl, matchesPayload);
+        var httpResponse = await _httpClient.PostAsJsonAsync<GetMatchesRequestModel>(matchesUrl, matchesPayload);
 
         var content = await httpResponse.Content.ReadAsStreamAsync();
         var matchResult = await JsonSerializer.DeserializeAsync<JsonDocument>(content, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
@@ -93,10 +118,10 @@
 {
     <h3>ASPNETCORE_ENVIRONMENT: @_env</h3>
 }
-else
+@*else
 {
     <h3>No configuration loaded. Env: @_env</h3>
-}
+}*@
 
 @if (_settings == null)
 {
@@ -145,37 +170,17 @@ else
 }
 else
 {
-    <table class="table table-striped ">
-        <thead class="thead-dark">
-            <tr>
-                <th>Match Id</th>
-                <th>Link</th>
-                <th>Home Team</th>
-                <th>Away Team</th>
-                <th>Start Date</th>
-                <th>Under 3.5 Odds</th>
-                <th>Home Win Odds</th>
-                <th>Draw Odds</th>
-                <th>Away Win Odds</th>
-                <th>League</th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var match in _matches)
-            {
-                <tr>
-                    <td>@match.Id</td>
-                    <td><a target="_blank" href="https://www.google.co.za/search?q=@match.Team1 vs @match.Team2 sofascore">Link to Match</a></td>
-                    <td>@match.Team1</td>
-                    <td>@match.Team2</td>
-                    <td>@match.StartDate.DateTime.ToLocalTime()</td>
-                    <td>@match.Odds_GoalsUnder3_5</td>
-                    <td>@match.Odds_HomeWin</td>
-                    <td>@match.Odds_Draw</td>
-                    <td>@match.Odds_AwayWin</td>
-                    <td>@match.League</td>
-                </tr>
-            }
-        </tbody>
-    </table>
+    <QuickGrid class="wrap" Items="_matches.AsQueryable()">
+        <PropertyColumn Property="@(p => p.Id)" Title="Match Id" Sortable="true" />
+        <TemplateColumn Title="Link" Sortable="true">
+            <a class="btn" href="@context.Link">Link</a>
+        </TemplateColumn>
+        <PropertyColumn Property="@(p => p.Team1)" Title="Home Team" Sortable="true" />
+        <PropertyColumn Property="@(p => p.Team2)" Title="Away Team" Sortable="true" />
+        <PropertyColumn Property="@(p => p.StartDate)" Title="Start Date" Sortable="true" />
+        <PropertyColumn Property="@(p => p.Odds_HomeWin)" Title="Home Win Odds" Sortable="true" />
+        <PropertyColumn Property="@(p => p.Odds_Draw)" Title="Draw Odds" Sortable="true" />
+        <PropertyColumn Property="@(p => p.Odds_AwayWin)" Title="Away Win Odds" Sortable="true" />
+        <PropertyColumn Property="@(p => p.League)" Title="Tournament" Sortable="true" />
+    </QuickGrid>
 }
